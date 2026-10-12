@@ -1,0 +1,29 @@
+name: Face try-on regression
+
+on:
+  pull_request:
+  push:
+    branches: [feat/face-try-on-playground]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run test:try-on
+      - run: npm run build
+      - run: npm run build-dev
+      - run: npm run build:try-on
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:try-on:browser
+      - run: npm run test:try-on:production

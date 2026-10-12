@@ -9,6 +9,7 @@ const THREE={BufferGeometry,BufferAttribute};
 export class MindARThree {
   constructor({container, uiLoading="yes", uiScanning="yes", uiError="yes", filterMinCF=null, filterBeta=null,
     userDeviceId = null, environmentDeviceId = null, disableFaceMirror = false,
+    maxPixelRatio = Infinity, onCameraReady = null, onFaceUpdate = null,
   }) {
     this.container = container;
     this.ui = new UI({ uiLoading, uiScanning, uiError });
@@ -18,12 +19,20 @@ export class MindARThree {
       filterBeta: filterBeta,
     });
     this.disableFaceMirror = disableFaceMirror;
+    this.onCameraReady = onCameraReady;
+    this.onFaceUpdate = onFaceUpdate;
+    this.startToken = 0;
     this.scene = new Scene();
     this.cssScene = new Scene();
-    this.renderer = new WebGLRenderer({ antialias: true, alpha: true });
+    try {
+      this.renderer = new WebGLRenderer({ antialias: true, alpha: true });
+    } catch (error) {
+      this.ui.dispose();
+      throw new DOMException('WebGL renderer could not initialize', 'NotSupportedError');
+    }
     this.cssRenderer = new CSS3DRenderer({ antialias: true });
     this.renderer.outputEncoding = sRGBEncoding;
-    this.renderer.setPixelRatio(window.devicePixelRatio);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxPixelRatio));
     this.camera = new PerspectiveCamera();
     this.userDeviceId = userDeviceId;
     this.environmentDeviceId = environmentDeviceId;
@@ -38,35 +47,85 @@ export class MindARThree {
 
     this.shouldFaceUser = true;
 
-    window.addEventListener('resize', this._resize.bind(this));
+    this.resizeHandler = this._resize.bind(this);
+    window.addEventListener('resize', this.resizeHandler);
   }
 
-  async start() {
+  start() {
+    if (this.disposed) return Promise.reject(new Error('MindARThree has been disposed'));
+    if (this.startPromise) return this.startPromise;
+    if (this.running) return Promise.resolve();
+    const token = ++this.startToken;
     this.ui.showLoading();
-    await this._startVideo();
-    await this._startAR();
-    this.ui.hideLoading();
+    this.startPromise = (async () => {
+      try {
+        await this._startVideo(token);
+        this._assertStart(token);
+        this.onCameraReady?.();
+        await this._startAR(token);
+        this._assertStart(token);
+        this.running = true;
+      } catch (error) {
+        if (token === this.startToken) this.stop();
+        throw error;
+      } finally {
+        this.startPromise = null;
+        this.ui.hideLoading();
+      }
+    })();
+    return this.startPromise;
+  }
+
+  _assertStart(token) {
+    if (token !== this.startToken || this.disposed) {
+      throw new DOMException('Camera start was cancelled', 'AbortError');
+    }
   }
 
   stop() {
-    const tracks = this.video.srcObject.getTracks();
-    tracks.forEach(function (track) {
-      track.stop();
-    });
-    this.video.remove();
+    ++this.startToken;
+    this.running = false;
+    this.cancelVideoWait?.();
     this.controller.stopProcessVideo();
+    this.renderer.setAnimationLoop(null);
+    if (this.video) {
+      this.video.srcObject?.getTracks().forEach((track) => track.stop());
+      this.video.pause();
+      this.video.srcObject = null;
+      this.video.removeEventListener('resize', this.resizeHandler);
+      this.video.remove();
+      this.video = null;
+    }
+    this.latestEstimate = null;
+    this.anchors.forEach(({group}) => { group.visible = false; });
+    this.faceMeshes.forEach((mesh) => { mesh.visible = false; });
+    this.ui.hideLoading();
   }
 
-  switchCamera() {
+  async dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.stop();
+    window.removeEventListener('resize', this.resizeHandler);
+    await this.controller.dispose();
+    this.renderer.dispose();
+    this.renderer.domElement.remove();
+    this.cssRenderer.domElement.remove();
+    this.ui.dispose();
+  }
+
+  async switchCamera() {
     this.shouldFaceUser = !this.shouldFaceUser;
     this.stop();
-    this.start();
+    await this.startPromise?.catch(() => {});
+    return this.start();
   }
 
   addFaceMesh() {
     const faceGeometry = this.controller.createThreeFaceGeometry(THREE);
     const faceMesh = new Mesh(faceGeometry, new MeshStandardMaterial({ color: 0xffffff }));
     faceMesh.visible = false;
+    faceMesh.frustumCulled = false;
     faceMesh.matrixAutoUpdate = false;
     this.faceMeshes.push(faceMesh);
     return faceMesh;
@@ -94,121 +153,134 @@ export class MindARThree {
     return this.latestEstimate;
   }
 
-  _startVideo() {
-    return new Promise((resolve, reject) => {
-      this.video = document.createElement('video');
+  async _startVideo(token) {
+    const video = document.createElement('video');
+    this.video = video;
+    video.setAttribute('autoplay', '');
+    video.setAttribute('muted', '');
+    video.muted = true;
+    video.setAttribute('playsinline', '');
+    video.style.position = 'absolute';
+    video.style.top = '0px';
+    video.style.left = '0px';
+    video.style.zIndex = '-2';
+    this.container.appendChild(video);
 
-      this.video.setAttribute('autoplay', '');
-      this.video.setAttribute('muted', '');
-      this.video.setAttribute('playsinline', '');
-      this.video.style.position = 'absolute'
-      this.video.style.top = '0px'
-      this.video.style.left = '0px'
-      this.video.style.zIndex = '-2'
-      this.container.appendChild(this.video);
+    if (!navigator.mediaDevices?.getUserMedia) {
+      this.ui.showCompatibility();
+      throw new DOMException('Camera API is unavailable', 'NotSupportedError');
+    }
 
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        this.ui.showCompatibility();
-        reject();
-        return;
-      }
-
-      const constraints = {
-        audio: false,
-        video: {}
-      };
-      if (this.shouldFaceUser) {
-        if (this.userDeviceId) {
-          constraints.video.deviceId = { exact: this.userDeviceId };
-        } else {
-          constraints.video.facingMode = 'user';
-        }
+    const constraints = {
+      audio: false,
+      video: {}
+    };
+    if (this.shouldFaceUser) {
+      if (this.userDeviceId) {
+        constraints.video.deviceId = { exact: this.userDeviceId };
       } else {
-        if (this.environmentDeviceId) {
-          constraints.video.deviceId = { exact: this.environmentDeviceId };
-        } else {
-          constraints.video.facingMode = 'environment';
-        }
+        constraints.video.facingMode = 'user';
       }
+    } else {
+      if (this.environmentDeviceId) {
+        constraints.video.deviceId = { exact: this.environmentDeviceId };
+      } else {
+        constraints.video.facingMode = 'environment';
+      }
+    }
 
-      navigator.mediaDevices.getUserMedia(constraints).then((stream) => {
-        this.video.addEventListener('loadedmetadata', () => {
-          this.video.setAttribute('width', this.video.videoWidth);
-          this.video.setAttribute('height', this.video.videoHeight);
-          resolve();
-        });
-        this.video.srcObject = stream;
-      }).catch((err) => {
-        console.log("getUserMedia error", err);
-        reject();
-      });
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    if (token !== this.startToken || this.disposed) {
+      stream.getTracks().forEach((track) => track.stop());
+      this._assertStart(token);
+    }
+    video.srcObject = stream;
+    await new Promise((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(timeout);
+        video.removeEventListener('loadedmetadata', ready);
+        video.removeEventListener('error', failed);
+        this.cancelVideoWait = null;
+      };
+      const ready = () => { cleanup(); resolve(); };
+      const failed = () => { cleanup(); reject(new DOMException('Camera video could not load', 'NotReadableError')); };
+      const timeout = setTimeout(failed, 30000);
+      this.cancelVideoWait = () => { cleanup(); reject(new DOMException('Camera start was cancelled', 'AbortError')); };
+      video.addEventListener('loadedmetadata', ready);
+      video.addEventListener('error', failed);
+      if (video.readyState >= 1) ready();
     });
+    this._assertStart(token);
+    await video.play();
+    video.setAttribute('width', video.videoWidth);
+    video.setAttribute('height', video.videoHeight);
+    video.addEventListener('resize', this.resizeHandler);
   }
 
-  _startAR() {
-    return new Promise(async (resolve, reject) => {
-      const video = this.video;
-      const container = this.container;
+  async _startAR(token) {
+    const video = this.video;
+    const container = this.container;
 
-      this.controller.onUpdate = ({ hasFace, estimateResult }) => {
+    this.controller.onUpdate = ({ hasFace, estimateResult }) => {
+      for (let i = 0; i < this.anchors.length; i++) {
+        if (this.anchors[i].css) {
+          this.anchors[i].group.children.forEach((obj) => {
+            obj.element.style.visibility = hasFace ? "visible" : "hidden";
+          });
+        } else {
+          this.anchors[i].group.visible = hasFace;
+        }
+      }
+      for (let i = 0; i < this.faceMeshes.length; i++) {
+        this.faceMeshes[i].visible = hasFace;
+      }
+
+      if (hasFace) {
+        const { metricLandmarks, faceMatrix, faceScale, blendshapes} = estimateResult;
+        this.latestEstimate = estimateResult;
+
         for (let i = 0; i < this.anchors.length; i++) {
+          const landmarkIndex = this.anchors[i].landmarkIndex;
+          const landmarkMatrix = this.controller.getLandmarkMatrix(landmarkIndex);
+
           if (this.anchors[i].css) {
-            this.anchors[i].group.children.forEach((obj) => {
-              obj.element.style.visibility = hasFace ? "visible" : "hidden";
-            });
+            const cssScale = 0.001;
+
+            const scaledElements = [
+              cssScale * landmarkMatrix[0], cssScale * landmarkMatrix[1], landmarkMatrix[2], landmarkMatrix[3],
+              cssScale * landmarkMatrix[4], cssScale * landmarkMatrix[5], landmarkMatrix[6], landmarkMatrix[7],
+              cssScale * landmarkMatrix[8], cssScale * landmarkMatrix[9], landmarkMatrix[10], landmarkMatrix[11],
+              cssScale * landmarkMatrix[12], cssScale * landmarkMatrix[13], landmarkMatrix[14], landmarkMatrix[15]
+            ]
+            this.anchors[i].group.matrix.set(...scaledElements);
           } else {
-            this.anchors[i].group.visible = hasFace;
+            this.anchors[i].group.matrix.set(...landmarkMatrix);
           }
         }
         for (let i = 0; i < this.faceMeshes.length; i++) {
-          this.faceMeshes[i].visible = hasFace;
+          this.faceMeshes[i].matrix.set(...faceMatrix);
         }
-
-        if (hasFace) {
-          const { metricLandmarks, faceMatrix, faceScale, blendshapes} = estimateResult;
-          this.latestEstimate = estimateResult;
-
-          for (let i = 0; i < this.anchors.length; i++) {
-            const landmarkIndex = this.anchors[i].landmarkIndex;
-            const landmarkMatrix = this.controller.getLandmarkMatrix(landmarkIndex);
-
-            if (this.anchors[i].css) {
-              const cssScale = 0.001;
-
-              const scaledElements = [
-                cssScale * landmarkMatrix[0], cssScale * landmarkMatrix[1], landmarkMatrix[2], landmarkMatrix[3],
-                cssScale * landmarkMatrix[4], cssScale * landmarkMatrix[5], landmarkMatrix[6], landmarkMatrix[7],
-                cssScale * landmarkMatrix[8], cssScale * landmarkMatrix[9], landmarkMatrix[10], landmarkMatrix[11],
-                cssScale * landmarkMatrix[12], cssScale * landmarkMatrix[13], landmarkMatrix[14], landmarkMatrix[15]
-              ]
-              this.anchors[i].group.matrix.set(...scaledElements);
-            } else {
-              this.anchors[i].group.matrix.set(...landmarkMatrix);
-            }
-          }
-          for (let i = 0; i < this.faceMeshes.length; i++) {
-            this.faceMeshes[i].matrix.set(...faceMatrix);
-          }
-        } else {
-          this.latestEstimate = null;
-        }
+      } else {
+        this.latestEstimate = null;
       }
-      this._resize();
+      this.onFaceUpdate?.({hasFace, estimateResult});
+    }
+    this._resize();
 
-      const flipFace = this.shouldFaceUser && !this.disableFaceMirror;
+    const flipFace = this.shouldFaceUser && !this.disableFaceMirror;
 
-      await this.controller.setup(flipFace);
-      await this.controller.dummyRun(video);
+    await this.controller.setup(flipFace);
+    this._assertStart(token);
+    await this.controller.dummyRun(video);
+    this._assertStart(token);
 
-      this._resize();
-      this.controller.processVideo(video);
-      resolve();
-    });
+    this._resize();
+    this.controller.processVideo(video);
   }
 
   _resize() {
     const { renderer, cssRenderer, camera, container, video } = this;
-    if (!video) return;
+    if (!video?.videoWidth || !video?.videoHeight || !container.clientWidth || !container.clientHeight) return;
 
     if (true) { // only needed if video dimension updated (e.g. when mobile orientation changes)
       this.video.setAttribute('width', this.video.videoWidth);

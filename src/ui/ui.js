@@ -10,6 +10,8 @@ export class UI {
     const cssBlock=document.createElement('style');
     cssBlock.innerText=css;
     document.head.appendChild(cssBlock);
+    this.cssBlock = cssBlock;
+    this.ownedElements = [];
     if (uiLoading === 'yes') {
       this.loadingModal = this._loadHTML(loadingHTML);
     } else if (uiLoading !== 'no') {
@@ -58,11 +60,18 @@ export class UI {
     this.scanningMask.classList.add("hidden");
   }
 
+  dispose() {
+    this.cssBlock.remove();
+    this.ownedElements.forEach((element) => element.remove());
+    this.ownedElements = [];
+  }
+
   _loadHTML(html) {
     const e = document.createElement('template');
     e.innerHTML = html.trim();
     const rootNode = e.content.firstChild;
     document.getElementsByTagName('body')[0].appendChild(rootNode);
+    this.ownedElements.push(rootNode);
     return rootNode;
   }
 }

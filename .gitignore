@@ -3,4 +3,8 @@ tests
 *.swp
 dist-dev
 dist/
+dist-try-on/
+try-on-artifacts/
+playwright-report/
+test-results/
 *.DS_Store

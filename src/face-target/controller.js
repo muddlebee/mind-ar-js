@@ -30,9 +30,18 @@ class Controller {
 
   async setup(flipFace) {
     this.flipFace = flipFace;
-    await waitCV();
-    this.faceMeshHelper = new FaceMeshHelper();
-    await this.faceMeshHelper.init();
+    if (!this.setupPromise) {
+      this.setupPromise = (async () => {
+        await waitCV();
+        this.faceMeshHelper = new FaceMeshHelper();
+        await this.faceMeshHelper.init();
+      })().catch((error) => {
+        this.faceMeshHelper?.dispose();
+        this.setupPromise = null;
+        throw error;
+      });
+    }
+    await this.setupPromise;
   }
 
   onInputResized(input) {
@@ -62,80 +71,112 @@ class Controller {
     const flippedInputContext = flippedCanvasElement.getContext('2d');
 
     this.processingVideo = true;
+    const processToken = this.processToken = (this.processToken || 0) + 1;
+    const isCurrent = () => this.processingVideo && this.processToken === processToken;
 
     const doProcess = async () => {
-      let results;
-
-      if (this.flipFace) {
-        flippedInputContext.clearRect(0, 0, flippedCanvasElement.width, flippedCanvasElement.height);
-        flippedInputContext.save();
-        flippedInputContext.translate(flippedCanvasElement.width, 0);
-        flippedInputContext.scale(-1, 1);
-        flippedInputContext.drawImage(input, 0, 0, flippedCanvasElement.width, flippedCanvasElement.height);
-        flippedInputContext.restore();
-        results = await this.faceMeshHelper.detect(flippedCanvasElement);
-      } else {
-        results = await this.faceMeshHelper.detect(input);
+      if (!isCurrent()) return;
+      // Video dimensions may change independently of the viewport (mobile rotation).
+      if (flippedCanvasElement.width !== input.width || flippedCanvasElement.height !== input.height) {
+        flippedCanvasElement.width = input.width;
+        flippedCanvasElement.height = input.height;
       }
+      try {
+        let results;
 
-      if (results.faceLandmarks.length === 0) {
-	this.lastEstimateResult = null;
-	this.onUpdate({hasFace: false});
+        if (this.flipFace) {
+          flippedInputContext.clearRect(0, 0, flippedCanvasElement.width, flippedCanvasElement.height);
+          flippedInputContext.save();
+          flippedInputContext.translate(flippedCanvasElement.width, 0);
+          flippedInputContext.scale(-1, 1);
+          flippedInputContext.drawImage(input, 0, 0, flippedCanvasElement.width, flippedCanvasElement.height);
+          flippedInputContext.restore();
+          results = await this.faceMeshHelper.detect(flippedCanvasElement);
+        } else {
+          results = await this.faceMeshHelper.detect(input);
+        }
 
-	for (let i = 0; i < this.landmarkFilters.length; i++) {
-	  this.landmarkFilters[i].reset();
-	}
-	this.faceMatrixFilter.reset();
-	this.faceScaleFilter.reset();
-      } else {
-	const landmarks = results.faceLandmarks[0].map((l) => {
-	  return [l.x, l.y, l.z];
-	});
-	const estimateResult = this.estimator.estimate(landmarks);
+        if (!isCurrent()) return;
+        if (results.faceLandmarks.length === 0) {
+          this.lastEstimateResult = null;
+          this.onUpdate?.({hasFace: false});
 
-	if (this.lastEstimateResult === null) {
-	  this.lastEstimateResult = estimateResult;
-	} else {
-	  const lastMetricLandmarks = this.lastEstimateResult.metricLandmarks;
-	  const lastFaceMatrix = this.lastEstimateResult.faceMatrix;
-	  const lastFaceScale = this.lastEstimateResult.faceScale;
+          for (let i = 0; i < this.landmarkFilters.length; i++) {
+            this.landmarkFilters[i].reset();
+          }
+          this.faceMatrixFilter.reset();
+          this.faceScaleFilter.reset();
+        } else {
+          const landmarks = results.faceLandmarks[0].map((l) => {
+            return [l.x, l.y, l.z];
+          });
+          const estimateResult = this.estimator.estimate(landmarks);
 
-	  const newMetricLandmarks = [];
-	  for (let i = 0; i < lastMetricLandmarks.length; i++) {
-	    newMetricLandmarks[i] = this.landmarkFilters[i].filter(Date.now(), estimateResult.metricLandmarks[i]);
-	  }
+          if (this.lastEstimateResult === null) {
+            this.lastEstimateResult = estimateResult;
+          } else {
+            const lastMetricLandmarks = this.lastEstimateResult.metricLandmarks;
+            const lastFaceMatrix = this.lastEstimateResult.faceMatrix;
+            const lastFaceScale = this.lastEstimateResult.faceScale;
 
-	  const newFaceMatrix = this.faceMatrixFilter.filter(Date.now(), estimateResult.faceMatrix);
+            const newMetricLandmarks = [];
+            for (let i = 0; i < lastMetricLandmarks.length; i++) {
+              newMetricLandmarks[i] = this.landmarkFilters[i].filter(Date.now(), estimateResult.metricLandmarks[i]);
+            }
 
-	  const newFaceScale = this.faceScaleFilter.filter(Date.now(), [estimateResult.faceScale]);
+            const newFaceMatrix = this.faceMatrixFilter.filter(Date.now(), estimateResult.faceMatrix);
 
-	  this.lastEstimateResult = {
-	    metricLandmarks: newMetricLandmarks,
-	    faceMatrix: newFaceMatrix,
-	    faceScale: newFaceScale[0],
-      blendshapes: results.faceBlendshapes[0],
-	  }
-	}
+            const newFaceScale = this.faceScaleFilter.filter(Date.now(), [estimateResult.faceScale]);
 
-	//console.log("resuts", results);
-	//console.log("estimateResult", estimateResult);
-	if (this.onUpdate) {
-	  this.onUpdate({hasFace: true, estimateResult: this.lastEstimateResult});
-	}
+            this.lastEstimateResult = {
+              metricLandmarks: newMetricLandmarks,
+              faceMatrix: newFaceMatrix,
+              faceScale: newFaceScale[0],
+        blendshapes: results.faceBlendshapes[0],
+            }
+          }
 
-	for (let i = 0; i < this.customFaceGeometries.length; i++) {
-	  this.customFaceGeometries[i].updatePositions(estimateResult.metricLandmarks);
-	}
-      }
-      if (this.processingVideo) {
-	window.requestAnimationFrame(doProcess);
+          //console.log("resuts", results);
+          //console.log("estimateResult", estimateResult);
+          if (this.onUpdate) {
+            this.onUpdate({hasFace: true, estimateResult: this.lastEstimateResult});
+          }
+
+          for (let i = 0; i < this.customFaceGeometries.length; i++) {
+            this.customFaceGeometries[i].updatePositions(estimateResult.metricLandmarks);
+          }
+        }
+        if (isCurrent()) {
+          this.processFrame = window.requestAnimationFrame(doProcess);
+        }
+      } catch (error) {
+        if (!isCurrent()) return;
+        this.stopProcessVideo();
+        this.onError?.(error);
       }
     }
-    window.requestAnimationFrame(doProcess);
+    this.processFrame = window.requestAnimationFrame(doProcess);
   }
 
   stopProcessVideo() {
     this.processingVideo = false;
+    this.processToken = (this.processToken || 0) + 1;
+    window.cancelAnimationFrame(this.processFrame);
+    this.lastEstimateResult = null;
+    this.landmarkFilters.forEach((filter) => filter.reset());
+    this.faceMatrixFilter.reset();
+    this.faceScaleFilter.reset();
+  }
+
+  async dispose() {
+    this.stopProcessVideo();
+    await this.setupPromise?.catch(() => {});
+    this.faceMeshHelper?.dispose();
+    this.faceMeshHelper = null;
+    this.setupPromise = null;
+    this.customFaceGeometries = [];
+    this.onUpdate = null;
+    this.onError = null;
   }
 
   createThreeFaceGeometry(THREE) {

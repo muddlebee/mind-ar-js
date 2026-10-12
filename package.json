@@ -7,7 +7,13 @@
     "dev": "vite --config vite.config.dev.js --host",
     "watch": "vite build --watch --config vite.config.dev.js",
     "build-dev": "vite build --config vite.config.dev.js",
-    "build": "vite build --config vite.config.prod.js"
+    "build": "vite build --config vite.config.prod.js",
+    "dev:try-on": "vite --config vite.config.try-on.js",
+    "build:try-on": "vite build --config vite.config.try-on.js",
+    "preview:try-on": "vite preview --config vite.config.try-on.js",
+    "test:try-on": "node --test examples/face-tracking/try-on/checks/*.test.js",
+    "test:try-on:browser": "playwright test --config examples/face-tracking/try-on/playwright.config.js",
+    "test:try-on:production": "playwright test --config examples/face-tracking/try-on/playwright.production.config.js"
   },
   "engines": {
     "node": ">=14.0.0"
@@ -47,6 +53,8 @@
     "src/"
   ],
   "devDependencies": {
+    "@playwright/test": "1.56.1",
+    "three": "0.136.0",
     "vite": "^5.0.11"
   }
 }

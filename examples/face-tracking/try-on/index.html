@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="theme-color" content="#f6f3ed">
+    <meta name="description" content="Mix colorful face effects in a live, browser-only camera preview. A MindAR open-source playground.">
+    <title>Face Try-On Playground · MindAR</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='10' fill='%237461b5'/%3E%3Cpath d='m16 5 3 7 8 1-6 5 2 8-7-4-7 4 2-8-6-5 8-1Z' fill='%23ffe6a2'/%3E%3C/svg%3E">
+  </head>
+  <body>
+    <a class="skip-link" href="#picker">Skip to effects</a>
+    <header class="site-header">
+      <a class="brand" href="./" aria-label="MindAR Face Playground home"><span class="brand-mark" aria-hidden="true">✦</span> mindar <span class="brand-divider">/</span> <span class="brand-sub">face playground</span></a>
+      <a class="text-link" href="#about">About & credits <span aria-hidden="true">↗</span></a>
+    </header>
+    <main>
+      <div class="intro"><div><p class="eyebrow">A LITTLE EXPERIMENT IN BEING YOU</p><h1>Your face. <span>Your playground.</span></h1></div><p class="intro-note">Pick a little color. Add something silly.<br>Make a look that feels like you.</p></div>
+      <div class="playground">
+        <section class="preview-section" aria-label="Live camera preview">
+          <div class="stage" id="stage">
+            <div id="camera-stage" aria-label="Camera and face effects"></div>
+            <div class="stage-top"><span class="camera-status" id="camera-status"><span class="status-dot" aria-hidden="true"></span><span id="camera-label">Camera off</span></span><span class="stage-label">LIVE TRY-ON</span></div>
+            <div class="stage-placeholder" id="placeholder">
+              <svg class="preview-illustration" viewBox="0 0 260 245" aria-hidden="true"><ellipse cx="130" cy="121" rx="64" ry="88" fill="#e9e5db"/><path d="M72 89c3-63 117-78 117 0" fill="none" stroke="#d0c6b3" stroke-width="7" stroke-linecap="round"/><circle cx="104" cy="109" r="22" fill="#c5e4df" stroke="#775c9d" stroke-width="5"/><circle cx="157" cy="109" r="22" fill="#c5e4df" stroke="#775c9d" stroke-width="5"/><path d="M126 107h10M112 153q19 17 38 0" fill="none" stroke="#775c9d" stroke-width="4" stroke-linecap="round"/><path d="m61 147 5 10 11 2-8 8 1 11-9-5-10 5 2-11-8-8 11-2" fill="#e8ab60"/><path d="m210 55 3 8 9 1-7 5 2 9-7-5-7 5 2-9-7-5 9-1" fill="#e37ea3"/><circle cx="43" cy="78" r="5" fill="#77b7aa"/><circle cx="212" cy="172" r="5" fill="#a899ce"/></svg>
+              <h2 id="placeholder-title">Come as you are.</h2><p id="placeholder-text">Your camera starts when you say so.<br>Browse a look, then jump in.</p>
+            </div>
+            <div class="tracking-hint" id="tracking-hint" hidden>Bring one face into view, in good light.</div>
+            <div class="stage-bottom"><span aria-hidden="true">✦</span> One face. Endless combinations.</div>
+          </div>
+          <div class="camera-toolbar"><button class="camera-button" id="camera-toggle" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="6" width="14" height="12" rx="3"/><path d="m17 10 4-3v10l-4-3"/></svg><span id="camera-button-label">Start camera</span></button><p id="status-message" role="status" aria-live="polite">Camera stays off until you start it.</p></div>
+          <p class="privacy-note"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6Z"/><path d="m8 12 3 3 5-6"/></svg> Your preview stays in this browser. No recording or uploads. <a href="#privacy" id="privacy-link">Privacy details</a></p>
+        </section>
+        <aside class="picker" id="picker" aria-label="Effect picker">
+          <div class="picker-heading"><div><p class="eyebrow">MIX & MATCH</p><h2>Find your mood.</h2></div><span class="catalog-count">10 effects</span></div>
+          <div class="category-tabs" role="tablist" aria-label="Effect category" id="category-tabs"></div>
+          <section id="effect-panel" role="tabpanel" tabindex="0" aria-label="Face effects"><div class="category-copy"><h3 id="category-title">Face</h3><p id="category-hint"></p></div><div class="effect-list" id="effect-list"></div></section>
+          <p class="picker-tip"><span aria-hidden="true">☝</span> Tap a selected effect again to remove it.</p>
+          <div class="look-heading"><h3>Your look <span id="selection-count">0 / 5</span></h3><button type="button" class="clear-button" id="clear-all" disabled>Clear all</button></div>
+          <div id="selected-look" class="selected-look"><p class="empty-look">A blank canvas, for now.<br>Choose one effect from each category.</p></div>
+          <p class="effect-feedback" id="effect-feedback" role="status" aria-live="polite"></p>
+          <div id="effect-errors" class="effect-errors" aria-live="polite"></div>
+          <div class="mix-note"><span aria-hidden="true">✳</span><p>More than one mood?<br><strong>Mix across all five categories.</strong></p></div>
+        </aside>
+      </div>
+      <details class="about" id="about"><summary>Made for curious faces & curious developers.</summary><div class="about-grid"><div id="privacy"><h2>A private preview</h2><p>Camera frames are processed locally by MindAR and MediaPipe. This application does not identify you, upload your frames, request a microphone, record, or add analytics.</p><p>Starting tracking downloads the pinned MediaPipe 0.10.9 WASM runtime from jsDelivr and Google's version 1 face-landmarker model. Those services receive ordinary download requests, not application camera images. An internet connection is required.</p></div><div><h2>Credits & limitations</h2><p>All ten effect graphics, thumbnails, and accessory geometries are original procedural artwork provided under the repository's MIT license. No bundled third-party models or SparkAR assets are used.</p><p>Built with <a href="https://github.com/hiukim/mind-ar-js">MindAR</a>, <a href="https://threejs.org/">Three.js</a>, and <a href="https://ai.google.dev/edge/mediapipe/solutions/vision/face_landmarker">MediaPipe</a>; their own licenses apply. The depth-only occluder uses MindAR's existing face geometry. <a href="./licenses.txt">License notices</a>.</p><p>Visual play, not a physical fit measurement. One face at a time. Desktop Chrome and Android Chrome are physical-test targets; real-device results are pending. iPhone Safari is unverified. Ear placement and back-of-head occlusion are approximate.</p></div></div></details>
+    </main>
+    <footer><span>Built for play. Open for learning.</span><a href="https://github.com/hiukim/mind-ar-js">MindAR · Open source <span aria-hidden="true">↗</span></a></footer>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

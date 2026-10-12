@@ -75,6 +75,10 @@ Official Documentation: https://hiukim.github.io/mind-ar-js-doc
 
 # Demo - Try it yourself
 
+### Face Try-On Playground (development reference)
+
+The additive [Face Try-On Playground](examples/face-tracking/try-on/README.md) includes ten original effects, camera controls, a responsive category picker, and reproducible browser/lifecycle checks. Run `npm run dev:try-on` or build only the demo with `npm run build:try-on`. Physical-device validation and a public hosted URL are pending; see its validation record and device checklist.
+
 <table>
   <tbody>
     <tr>
