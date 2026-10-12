@@ -26,6 +26,11 @@ class FaceMeshHelper {
     const faceLandmarkerResult = this.faceLandmarker.detect(input);
     return faceLandmarkerResult;
   }
+
+  dispose() {
+    this.faceLandmarker?.close();
+    this.faceLandmarker = null;
+  }
 }
 
 export {

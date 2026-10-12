@@ -25,6 +25,14 @@ landmarkBasis.forEach(([index, w]) => {
 });
 majorLandmarkIndexes.sort((a, b) => a-b);
 
+// OpenCV Mats own WASM allocations; release them on success and on failure.
+const withCvResources = (run) => {
+  const owned = [];
+  const own = (mat) => { owned.push(mat); return mat; };
+  try { return run(own); }
+  finally { owned.reverse().forEach((mat) => mat.delete()); }
+};
+
 let leftMostLandmarkIndex = 0;
 let rightMostLandmarkIndex = 0;
 for (let i = 0; i < canonicalMetricLandmarks.length; i++) {
@@ -63,109 +71,111 @@ class Estimator {
   }
 
   estimate(landmarks) {
-    landmarks = landmarks.slice(0, canonicalMetricLandmarks.length); // in new mediapipe version, there is 10 extra landmarks for iris (which we don't have in canonical model)
+    return withCvResources((own) => {
+      landmarks = landmarks.slice(0, canonicalMetricLandmarks.length); // in new mediapipe version, there is 10 extra landmarks for iris (which we don't have in canonical model)
 
-    //console.log("landmarks", landmarks);
-    const screenLandmarks = this._projectToScreen(landmarks);
-    //console.log("screenLandmarks", screenLandmarks);
+      //console.log("landmarks", landmarks);
+      const screenLandmarks = this._projectToScreen(landmarks);
+      //console.log("screenLandmarks", screenLandmarks);
 
-    let intermediateLandmarks = this._cloneLandmarks(screenLandmarks);
-    this._changeHandedness(intermediateLandmarks);
+      let intermediateLandmarks = this._cloneLandmarks(screenLandmarks);
+      this._changeHandedness(intermediateLandmarks);
 
-    const depthOffset = screenLandmarks.reduce((a, l) => {
-      return a + l[2];
-    }, 0) / screenLandmarks.length;
+      const depthOffset = screenLandmarks.reduce((a, l) => {
+        return a + l[2];
+      }, 0) / screenLandmarks.length;
 
-    const firstIterationScale = this._estimateScale(intermediateLandmarks);
+      const firstIterationScale = this._estimateScale(intermediateLandmarks);
 
-    intermediateLandmarks = this._cloneLandmarks(screenLandmarks);
-    this._moveAndRescaleZ(depthOffset, firstIterationScale, intermediateLandmarks);
-    this._unprojectScreen(intermediateLandmarks)
-    this._changeHandedness(intermediateLandmarks);
+      intermediateLandmarks = this._cloneLandmarks(screenLandmarks);
+      this._moveAndRescaleZ(depthOffset, firstIterationScale, intermediateLandmarks);
+      this._unprojectScreen(intermediateLandmarks)
+      this._changeHandedness(intermediateLandmarks);
 
-    const secondIterationScale = this._estimateScale(intermediateLandmarks);
-    //console.log("estimator secondIterationScale", secondIterationScale);
+      const secondIterationScale = this._estimateScale(intermediateLandmarks);
+      //console.log("estimator secondIterationScale", secondIterationScale);
 
-    let metricLandmarks = this._cloneLandmarks(screenLandmarks);
-    const totalScale = firstIterationScale * secondIterationScale;
-    this._moveAndRescaleZ(depthOffset, totalScale, metricLandmarks);
-    this._unprojectScreen(metricLandmarks);
-    this._changeHandedness(metricLandmarks);
+      let metricLandmarks = this._cloneLandmarks(screenLandmarks);
+      const totalScale = firstIterationScale * secondIterationScale;
+      this._moveAndRescaleZ(depthOffset, totalScale, metricLandmarks);
+      this._unprojectScreen(metricLandmarks);
+      this._changeHandedness(metricLandmarks);
 
-    const poseTransformMat = this._solveWeightedOrthogonal(canonicalMetricLandmarks, metricLandmarks, sqrtWeights);
-    //console.log("estimator poseTransformMat", poseTransformMat);
+      const poseTransformMat = this._solveWeightedOrthogonal(canonicalMetricLandmarks, metricLandmarks, sqrtWeights);
+      //console.log("estimator poseTransformMat", poseTransformMat);
 
-    const poseTransformMatCV = opencv.matFromArray(4, 4, opencv.CV_64F, [
-      poseTransformMat[0][0], poseTransformMat[0][1], poseTransformMat[0][2], poseTransformMat[0][3],
-      poseTransformMat[1][0], poseTransformMat[1][1], poseTransformMat[1][2], poseTransformMat[1][3],
-      poseTransformMat[2][0], poseTransformMat[2][1], poseTransformMat[2][2], poseTransformMat[2][3],
-      poseTransformMat[3][0], poseTransformMat[3][1], poseTransformMat[3][2], poseTransformMat[3][3],
-    ]);
-    //console.log("estimator poseTransformMatCV", poseTransformMatCV.data64F);
-    const invPoseTransformMatCV = poseTransformMatCV.inv(0); // argument is method?. 0=DECOMP_LU?
-    //console.log("estimator __inv", invPoseTransformMatCV);
+      const poseTransformMatCV = own(opencv.matFromArray(4, 4, opencv.CV_64F, [
+        poseTransformMat[0][0], poseTransformMat[0][1], poseTransformMat[0][2], poseTransformMat[0][3],
+        poseTransformMat[1][0], poseTransformMat[1][1], poseTransformMat[1][2], poseTransformMat[1][3],
+        poseTransformMat[2][0], poseTransformMat[2][1], poseTransformMat[2][2], poseTransformMat[2][3],
+        poseTransformMat[3][0], poseTransformMat[3][1], poseTransformMat[3][2], poseTransformMat[3][3],
+      ]));
+      //console.log("estimator poseTransformMatCV", poseTransformMatCV.data64F);
+      const invPoseTransformMatCV = own(poseTransformMatCV.inv(0)); // argument is method?. 0=DECOMP_LU?
+      //console.log("estimator __inv", invPoseTransformMatCV);
 
-    const invPoseTransformData = invPoseTransformMatCV.data64F;
-    const invPoseTransformMat = [
-      [invPoseTransformData[0], invPoseTransformData[1], invPoseTransformData[2], invPoseTransformData[3]],
-      [invPoseTransformData[4], invPoseTransformData[5], invPoseTransformData[6], invPoseTransformData[7]],
-      [invPoseTransformData[8], invPoseTransformData[9], invPoseTransformData[10], invPoseTransformData[11]],
-      [invPoseTransformData[12], invPoseTransformData[13], invPoseTransformData[14], invPoseTransformData[15]],
-    ];
+      const invPoseTransformData = invPoseTransformMatCV.data64F;
+      const invPoseTransformMat = [
+        [invPoseTransformData[0], invPoseTransformData[1], invPoseTransformData[2], invPoseTransformData[3]],
+        [invPoseTransformData[4], invPoseTransformData[5], invPoseTransformData[6], invPoseTransformData[7]],
+        [invPoseTransformData[8], invPoseTransformData[9], invPoseTransformData[10], invPoseTransformData[11]],
+        [invPoseTransformData[12], invPoseTransformData[13], invPoseTransformData[14], invPoseTransformData[15]],
+      ];
 
-    //const invPoseTransformMat = mlMatrix.inverse(new mlMatrix.Matrix(poseTransformMat)).data;
+      //const invPoseTransformMat = mlMatrix.inverse(new mlMatrix.Matrix(poseTransformMat)).data;
 
-    //console.log("estimator invPoseTransformMat", invPoseTransformMat);
-    const newMetricLandmarks = [];
-    for (let l = 0; l < metricLandmarks.length; l++) {
-      newMetricLandmarks[l] = [];
-      for (let k = 0; k < 3; k++) {
-	newMetricLandmarks[l][k] = invPoseTransformMat[k][3];
-	for (let i = 0; i < 3; i++) {
-	  newMetricLandmarks[l][k] += invPoseTransformMat[k][i] * metricLandmarks[l][i];
-	}
+      //console.log("estimator invPoseTransformMat", invPoseTransformMat);
+      const newMetricLandmarks = [];
+      for (let l = 0; l < metricLandmarks.length; l++) {
+        newMetricLandmarks[l] = [];
+        for (let k = 0; k < 3; k++) {
+          newMetricLandmarks[l][k] = invPoseTransformMat[k][3];
+          for (let i = 0; i < 3; i++) {
+            newMetricLandmarks[l][k] += invPoseTransformMat[k][i] * metricLandmarks[l][i];
+          }
+        }
       }
-    }
-    //console.log("estimator canonicalMetricLandmarks", canonicalMetricLandmarks);
-    //console.log("estimator newMetricLandmarks", newMetricLandmarks);
+      //console.log("estimator canonicalMetricLandmarks", canonicalMetricLandmarks);
+      //console.log("estimator newMetricLandmarks", newMetricLandmarks);
 
-    const modelPoints = [];
-    const imagePoints = [];
-    majorLandmarkIndexes.forEach((idx) => {
-      modelPoints.push(newMetricLandmarks[idx][0], newMetricLandmarks[idx][1], newMetricLandmarks[idx][2]);
-      //modelPoints.push(canonicalMetricLandmarks[idx][0], canonicalMetricLandmarks[idx][1], canonicalMetricLandmarks[idx][2]);
-      imagePoints.push(landmarks[idx][0] * this.frameWidth , landmarks[idx][1] * this.frameHeight);
+      const modelPoints = [];
+      const imagePoints = [];
+      majorLandmarkIndexes.forEach((idx) => {
+        modelPoints.push(newMetricLandmarks[idx][0], newMetricLandmarks[idx][1], newMetricLandmarks[idx][2]);
+        //modelPoints.push(canonicalMetricLandmarks[idx][0], canonicalMetricLandmarks[idx][1], canonicalMetricLandmarks[idx][2]);
+        imagePoints.push(landmarks[idx][0] * this.frameWidth , landmarks[idx][1] * this.frameHeight);
+      });
+      //console.log("estimator modelPoints", modelPoints);
+      //console.log("estimator imagePoints", imagePoints);
+
+      const modelPointsMat = own(opencv.matFromArray(modelPoints.length/3, 3, opencv.CV_64F, modelPoints));
+      const imagePointsMat = own(opencv.matFromArray(imagePoints.length/2, 2, opencv.CV_64F, imagePoints));
+
+      const cameraMatrix = own(opencv.matFromArray(3, 3, opencv.CV_64F, [
+        this.focalLength, 0, this.center[0],
+        0, this.focalLength, this.center[1],
+        0, 0, 1
+      ]));
+
+      const distCoeffs = own(opencv.Mat.zeros(4, 1, opencv.CV_64F)); // Assuming no lens distortion
+
+      const rvecs = own(new opencv.Mat(3, 1, opencv.CV_64F));
+      const tvecs = own(new opencv.Mat(3, 1, opencv.CV_64F));
+      const rvecs2 = own(new opencv.Mat(3, 3, opencv.CV_64F));
+
+      opencv.solvePnP(modelPointsMat, imagePointsMat, cameraMatrix, distCoeffs, rvecs, tvecs, false);
+      opencv.Rodrigues(rvecs, rvecs2);
+
+      const m = [
+        rvecs2.data64F[0], rvecs2.data64F[1], rvecs2.data64F[2], tvecs.data64F[0],
+        -rvecs2.data64F[3], -rvecs2.data64F[4], -rvecs2.data64F[5], -tvecs.data64F[1],
+        -rvecs2.data64F[6], -rvecs2.data64F[7], -rvecs2.data64F[8], -tvecs.data64F[2],
+        0, 0, 0, 1
+      ];
+      const faceScale = (newMetricLandmarks[rightMostLandmarkIndex][0] - newMetricLandmarks[leftMostLandmarkIndex][0]);
+
+      return {metricLandmarks: newMetricLandmarks, faceMatrix: m, faceScale};
     });
-    //console.log("estimator modelPoints", modelPoints);
-    //console.log("estimator imagePoints", imagePoints);
-
-    const modelPointsMat = opencv.matFromArray(modelPoints.length/3, 3, opencv.CV_64F, modelPoints);
-    const imagePointsMat = opencv.matFromArray(imagePoints.length/2, 2, opencv.CV_64F, imagePoints);
-
-    const cameraMatrix = opencv.matFromArray(3, 3, opencv.CV_64F, [
-      this.focalLength, 0, this.center[0],
-      0, this.focalLength, this.center[1],
-      0, 0, 1
-    ]);
-
-    const distCoeffs = opencv.Mat.zeros(4, 1, opencv.CV_64F); // Assuming no lens distortion
-
-    const rvecs = new opencv.Mat(3, 1, opencv.CV_64F);
-    const tvecs = new opencv.Mat(3, 1, opencv.CV_64F);
-    const rvecs2 = new opencv.Mat(3, 3, opencv.CV_64F);
-
-    opencv.solvePnP(modelPointsMat, imagePointsMat, cameraMatrix, distCoeffs, rvecs, tvecs, false);
-    opencv.Rodrigues(rvecs, rvecs2);
-
-    const m = [
-      rvecs2.data64F[0], rvecs2.data64F[1], rvecs2.data64F[2], tvecs.data64F[0],
-      -rvecs2.data64F[3], -rvecs2.data64F[4], -rvecs2.data64F[5], -tvecs.data64F[1],
-      -rvecs2.data64F[6], -rvecs2.data64F[7], -rvecs2.data64F[8], -tvecs.data64F[2],
-      0, 0, 0, 1
-    ];
-    const faceScale = (newMetricLandmarks[rightMostLandmarkIndex][0] - newMetricLandmarks[leftMostLandmarkIndex][0]);
-
-    return {metricLandmarks: newMetricLandmarks, faceMatrix: m, faceScale};
   }
 
   _estimateScale(landmarks) {
@@ -273,25 +283,27 @@ class Estimator {
   }
 
   _computeOptimalRotation(design_matrix) {
-    const designMatrixMat = opencv.matFromArray(3, 3, opencv.CV_64F, [
-      design_matrix[0][0], design_matrix[0][1], design_matrix[0][2],
-      design_matrix[1][0], design_matrix[1][1], design_matrix[1][2],
-      design_matrix[2][0], design_matrix[2][1], design_matrix[2][2]
-    ]);
-    const wMat = new opencv.Mat(3, 1, opencv.CV_64F);
-    const uMat = new opencv.Mat(3, 3, opencv.CV_64F);
-    const vtMat = new opencv.Mat(3, 3, opencv.CV_64F);
-    opencv.SVDecomp(designMatrixMat, wMat, uMat, vtMat);
+    return withCvResources((own) => {
+      const designMatrixMat = own(opencv.matFromArray(3, 3, opencv.CV_64F, [
+        design_matrix[0][0], design_matrix[0][1], design_matrix[0][2],
+        design_matrix[1][0], design_matrix[1][1], design_matrix[1][2],
+        design_matrix[2][0], design_matrix[2][1], design_matrix[2][2]
+      ]));
+      const wMat = own(new opencv.Mat(3, 1, opencv.CV_64F));
+      const uMat = own(new opencv.Mat(3, 3, opencv.CV_64F));
+      const vtMat = own(new opencv.Mat(3, 3, opencv.CV_64F));
+      opencv.SVDecomp(designMatrixMat, wMat, uMat, vtMat);
 
-    const rotation = [[0,0,0], [0,0,0], [0,0,0]];
-    for (let k = 0; k < 3; k++) {
-      for (let l = 0; l < 3; l++) {
-	for (let i = 0; i < 3; i++) {
-	  rotation[k][l] += uMat.data64F[k*3+i] * vtMat.data64F[i*3+l];
-	}
+      const rotation = [[0,0,0], [0,0,0], [0,0,0]];
+      for (let k = 0; k < 3; k++) {
+        for (let l = 0; l < 3; l++) {
+          for (let i = 0; i < 3; i++) {
+            rotation[k][l] += uMat.data64F[k*3+i] * vtMat.data64F[i*3+l];
+          }
+        }
       }
-    }
-    return rotation;
+      return rotation;
+    });
   }
 
   _computeOptimalScale(centeredWeightedSources, weightedSources, weightedTargets, rotation) {

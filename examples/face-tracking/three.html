@@ -53,8 +53,12 @@
       mindarThree.renderer.setAnimationLoop(null);
     });
     const switchButton = document.querySelector("#switchButton");
-    switchButton.addEventListener("click", () => {
-      mindarThree.switchCamera();
+    switchButton.addEventListener("click", async () => {
+      if (!mindarThree) return;
+      await mindarThree.switchCamera();
+      mindarThree.renderer.setAnimationLoop(() => {
+        mindarThree.renderer.render(mindarThree.scene, mindarThree.camera);
+      });
     });
 
     navigator.mediaDevices.enumerateDevices()
